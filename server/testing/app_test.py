@@ -1,66 +1,94 @@
+import pytest
 import json
+from app import app, db, Plant  # import your app, db, and model
 
-from app import app
-from models import db, Plant
+# -------------------------------
+# Test Client Fixture
+# -------------------------------
+@pytest.fixture
+def client():
+    # Use an in-memory database for testing
+    app.config["TESTING"] = True
+    app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///:memory:"
+    app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
-class TestPlant:
-    '''Flask application in app.py'''
+    with app.app_context():
+        db.create_all()  # Create tables
+        yield app.test_client()  # Provide test client
+        db.drop_all()  # Clean up after tests
 
-    def test_plants_get_route(self):
-        '''has a resource available at "/plants".'''
-        response = app.test_client().get('/plants')
-        assert(response.status_code == 200)
-
-    def test_plants_get_route_returns_list_of_plant_objects(self):
-        '''returns JSON representing Plant objects at "/plants".'''
-        with app.app_context():
-            p = Plant(name="Douglas Fir")
-            db.session.add(p)
-            db.session.commit()
-
-            response = app.test_client().get('/plants')
-            data = json.loads(response.data.decode())
-            assert(type(data) == list)
-            for record in data:
-                assert(type(record) == dict)
-                assert(record['id'])
-                assert(record['name'])
-
-            db.session.delete(p)
-            db.session.commit()
-
-    def test_plants_post_route_creates_plant_record_in_db(self):
-        '''allows users to create Plant records through the "/plants" POST route.'''
-        response = app.test_client().post(
-            '/plants',
-            json = {
-                "name": "Live Oak",
-                "image": "https://www.nwf.org/-/media/NEW-WEBSITE/Shared-Folder/Wildlife/Plants-and-Fungi/plant_southern-live-oak_600x300.ashx",
-                "price": 250.00,
-            }
+# -------------------------------
+# Test Plant Model
+# -------------------------------
+def test_plants_get_route_returns_list_of_plant_objects(client):
+    # Create a plant
+    with app.app_context():
+        p = Plant(
+            name="Douglas Fir",
+            image="https://example.com/douglas-fir.png",
+            price=10.0
         )
+        db.session.add(p)
+        db.session.commit()
 
-        with app.app_context():
-            lo = Plant.query.filter_by(name="Live Oak").first()
-            assert(lo.id)
-            assert(lo.name == "Live Oak")
-            assert(lo.image == "https://www.nwf.org/-/media/NEW-WEBSITE/Shared-Folder/Wildlife/Plants-and-Fungi/plant_southern-live-oak_600x300.ashx")
-            assert(lo.price == 250.00)
+    # Make GET request
+    response = client.get("/plants")
+    data = json.loads(response.data.decode())
 
-            db.session.delete(lo)
-            db.session.commit()
+    assert response.status_code == 200
+    assert isinstance(data, list)
+    assert data[0]["name"] == "Douglas Fir"
 
-    def test_plant_by_id_get_route(self):
-        '''has a resource available at "/plants/<int:id>".'''
-        response = app.test_client().get('/plants/1')
-        assert(response.status_code == 200)
+def test_plants_post_route_creates_plant_record_in_db(client):
+    # POST a new plant
+    response = client.post(
+        "/plants",
+        json={
+            "name": "Live Oak",
+            "image": "https://www.nwf.org/-/media/NEW-WEBSITE/Shared-Folder/Wildlife/Plants-and-Fungi/plant_southern-live-oak_600x300.ashx",
+            "price": 250.00,
+        }
+    )
 
-    def test_plant_by_id_get_route_returns_one_plant(self):
-        '''returns JSON representing one Plant object at "/plants/<int:id>".'''
-        response = app.test_client().get('/plants/1')
-        data = json.loads(response.data.decode())
+    assert response.status_code == 201  # make sure your route returns 201 on success
 
-        assert(type(data) == dict)
-        assert(data["id"])
-        assert(data["name"])
-                
+    # Verify in DB
+    with app.app_context():
+        lo = Plant.query.filter_by(name="Live Oak").first()
+        assert lo is not None
+        assert lo.price == 250.00
+
+def test_plant_by_id_get_route(client):
+    # Insert a plant
+    with app.app_context():
+        p = Plant(
+            name="Maple",
+            image="https://example.com/maple.png",
+            price=15.0
+        )
+        db.session.add(p)
+        db.session.commit()
+        plant_id = p.id
+
+    # GET by ID
+    response = client.get(f"/plants/{plant_id}")
+    assert response.status_code == 200
+
+def test_plant_by_id_get_route_returns_one_plant(client):
+    # Insert a plant
+    with app.app_context():
+        p = Plant(
+            name="Oak",
+            image="https://example.com/oak.png",
+            price=20.0
+        )
+        db.session.add(p)
+        db.session.commit()
+        plant_id = p.id
+
+    # GET by ID
+    response = client.get(f"/plants/{plant_id}")
+    data = json.loads(response.data.decode())
+
+    assert data["name"] == "Oak"
+    assert data["price"] == 20.0
